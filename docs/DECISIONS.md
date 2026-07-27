@@ -69,6 +69,34 @@ families would be worth less than one forecasting-to-decision system where every
 number is reproducible. Scaffolding and interfaces for the deferred phases are left
 in place; what is not built is stated plainly in the README rather than implied.
 
+### D-007 — Parametric predictive distribution instead of per-quantile models
+**Phase:** 6
+**Decision:** Fit one LightGBM per origin with a Tweedie objective for the conditional
+mean, then treat that mean as the mean of a negative binomial whose dispersion is
+estimated from held-out residuals. Quantiles are read off analytically.
+**Why:** The decision layer needs an *arbitrary* quantile per SKU, because each SKU's
+critical ratio differs (that is the entire point of the newsvendor step). Fitting a
+separate quantile model per required quantile per origin would mean 30+ LightGBM fits
+on ~1.5M rows each. The parametric route gives every quantile from one fit, and
+negative binomial is the structurally right family for overdispersed counts — the same
+family the generating process uses.
+**Cost accepted and disclosed:** this imposes a distributional assumption that
+per-quantile regression would not. It is therefore *tested*, not assumed: empirical
+interval coverage is reported. Two known sources of over-narrow intervals are stated
+in `docs/LEAKAGE.md` — dispersion is reused across origins, and daily demand is
+assumed independent when summed to a horizon.
+
+### D-008 — Ordered SQL models instead of dbt
+**Phase:** 4
+**Decision:** Express the staging → intermediate → mart DAG as ordered SQL executed by
+`nova/warehouse/build.py`, rather than as a dbt project.
+**Why:** dbt would add a dependency and a second configuration surface without
+changing a single output row. The layering, the model boundaries and the tests are all
+preserved; the tests run as SQL predicates that must return zero rows, which is what
+`dbt test` does underneath.
+**Cost accepted:** no dbt lineage graph or docs site. If this grew past ~30 models,
+dbt would become worth it.
+
 ### D-004 — Total cost in ₹ is the primary metric, not WAPE
 **Phase:** 0/6
 **Decision:** Headline results are reported as total cost (stockout penalty +
