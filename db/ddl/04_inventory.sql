@@ -92,10 +92,13 @@ CREATE TABLE nova.inventory_snapshot (
     CONSTRAINT snap_flow_balances CHECK (
         qty_open + qty_received - qty_dispensed - qty_expired + qty_adjusted = qty_close
     ),
-    -- You cannot have unmet demand while holding stock of that drug at open.
-    -- If this fires, the simulator or the ETL is wrong.
+    -- Unmet demand is only possible once the shelf is empty. Stated as
+    -- "close must be zero" rather than as an arithmetic identity on open and
+    -- received, because units can also leave via expiry -- an earlier draft
+    -- of this constraint omitted qty_expired and rejected 739 legitimate rows
+    -- where stock expired the same day it ran out.
     CONSTRAINT snap_unmet_implies_empty CHECK (
-        qty_unmet = 0 OR qty_open + qty_received - qty_dispensed = 0
+        qty_unmet = 0 OR qty_close = 0
     ),
     CONSTRAINT snap_lead_time_pos CHECK (lead_time_days > 0)
 );
