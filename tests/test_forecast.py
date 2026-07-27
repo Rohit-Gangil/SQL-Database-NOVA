@@ -162,13 +162,13 @@ def test_policy_cost_penalises_both_stockouts_and_overstock():
     rng = np.random.default_rng(2)
     n_s, n_t = 40, 120
     demand = rng.poisson(2.0, size=(n_s, n_t)).astype(float)
-    kw = dict(
-        unit_cost=np.full(n_s, 50.0),
-        unit_margin=np.full(n_s, 20.0),
-        criticality=np.full(n_s, 3),
-        shelf_life_days=np.full(n_s, 60),
-        cfg=SIM, review_days=7, lead_days=3,
-    )
+    kw = {
+        "unit_cost": np.full(n_s, 50.0),
+        "unit_margin": np.full(n_s, 20.0),
+        "criticality": np.full(n_s, 3),
+        "shelf_life_days": np.full(n_s, 60),
+        "cfg": SIM, "review_days": 7, "lead_days": 3,
+    }
     starved = newsvendor.simulate_policy_cost(demand, np.full(n_s, 1.0), **kw)
     sensible = newsvendor.simulate_policy_cost(demand, np.full(n_s, 25.0), **kw)
     glutted = newsvendor.simulate_policy_cost(demand, np.full(n_s, 4000.0), **kw)

@@ -14,7 +14,8 @@ import numpy as np
 import pytest
 
 from nova.config import SIM
-from nova.simulator import demand as demand_mod, entities, inventory
+from nova.simulator import demand as demand_mod
+from nova.simulator import entities, inventory
 
 SMALL = replace(
     SIM, n_branches=6, n_drugs=30, n_patients=500, n_prescribers=50,
@@ -32,8 +33,8 @@ def sim():
     shocks = demand_mod.generate_supply_shocks(SMALL, rng, companies, drugs)
     dem, mu = demand_mod.simulate_true_demand(SMALL, rng, branches, drugs, regimes)
     inv = inventory.simulate_inventory(SMALL, rng, dem, drugs, shocks)
-    return dict(cfg=SMALL, seed=SIM_SEED, branches=branches, drugs=drugs,
-                demand=dem, mu=mu, inv=inv, shocks=shocks, regimes=regimes)
+    return {"cfg": SMALL, "seed": SIM_SEED, "branches": branches, "drugs": drugs,
+            "demand": dem, "mu": mu, "inv": inv, "shocks": shocks, "regimes": regimes}
 
 
 # ---------------------------------------------------------------------
@@ -190,8 +191,8 @@ def test_regime_changes_shift_demand(sim):
         after = series[cut:cut + 90].mean()
         if before <= 0.05 and after <= 0.05:
             continue                              # series too sparse to judge
-        if row.multiplier > 1 and after > before:
-            detected += 1
-        elif row.multiplier < 1 and after < before:
+        # Directionally correct: an injected surge must raise the mean and an
+        # injected collapse must lower it.
+        if (row.multiplier > 1) == (after > before):
             detected += 1
     assert detected >= len(sim["regimes"]) * 0.5

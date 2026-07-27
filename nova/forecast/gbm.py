@@ -55,7 +55,7 @@ DEFAULT_PARAMS: dict = {
 
 def fit_gbm(train: pd.DataFrame, feature_cols: list[str], target_col: str,
             num_boost_round: int = 400,
-            params: dict | None = None) -> "lgb.Booster":
+            params: dict | None = None) -> lgb.Booster:
     if lgb is None:
         raise ImportError("lightgbm is required for rung 2")
     p = dict(DEFAULT_PARAMS)
@@ -81,7 +81,7 @@ def fit_gbm(train: pd.DataFrame, feature_cols: list[str], target_col: str,
     return lgb.train(p, ds, num_boost_round=num_boost_round)
 
 
-def predict_mean(model: "lgb.Booster", frame: pd.DataFrame,
+def predict_mean(model: lgb.Booster, frame: pd.DataFrame,
                  feature_cols: list[str]) -> np.ndarray:
     """Point forecast, clipped at zero. Negative demand is not a thing."""
     return np.clip(model.predict(frame[feature_cols]), 0.0, None)

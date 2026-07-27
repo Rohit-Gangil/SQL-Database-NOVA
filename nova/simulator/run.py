@@ -18,7 +18,8 @@ import numpy as np
 import pandas as pd
 
 from nova.config import DATA_DIR, DUCKDB_PATH, SEED, SIM, SimConfig
-from nova.simulator import anomalies, demand as demand_mod, entities, inventory
+from nova.simulator import anomalies, entities, inventory
+from nova.simulator import demand as demand_mod
 
 
 def _panel_to_frame(cfg: SimConfig, arrays: dict[str, np.ndarray],

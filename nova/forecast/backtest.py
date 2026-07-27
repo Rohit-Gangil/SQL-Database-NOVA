@@ -26,10 +26,9 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from nova.config import ARTIFACT_DIR, DUCKDB_PATH, SIM, SPLIT
+from nova.config import ARTIFACT_DIR, DUCKDB_PATH, SPLIT
+from nova.features.build import FEATURE_COLUMNS
 from nova.forecast import baselines, gbm, metrics
-from nova.features.build import FEATURE_COLUMNS, FEATURE_GROUPS
-from nova.inventory import newsvendor
 
 TRAIN_SAMPLE_ROWS = 1_500_000
 
@@ -152,7 +151,7 @@ def main() -> None:
     print(f"[backtest] matrices {true.shape} loaded in {time.perf_counter()-t0:.1f}s")
 
     horizon = SPLIT.horizon_days
-    feature_cols = [c for c in FEATURE_COLUMNS]
+    feature_cols = list(FEATURE_COLUMNS)
 
     per_origin: list[dict] = []
     gbm_preds_by_origin: dict[pd.Timestamp, np.ndarray] = {}

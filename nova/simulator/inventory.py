@@ -93,7 +93,6 @@ def simulate_inventory(
     # A shock scales down the quantity actually delivered.
     drug_company = drugs["company_id"].to_numpy()
     series_company = np.repeat(drug_company[None, :], n_b, axis=0).reshape(n_s)
-    shock_factor = np.ones((n_t,), dtype=np.float32)
     shock_by_series_day: list[tuple[np.ndarray, int, int, float]] = []
     for sh in shocks.itertuples(index=False):
         mask = series_company == sh.company_id
