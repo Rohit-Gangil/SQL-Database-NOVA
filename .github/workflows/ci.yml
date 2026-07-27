@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check nova tests
+
+      - name: Unit tests
+        # Simulator, leakage and metric tests generate their own reduced
+        # fixtures, so they need no pre-built dataset.
+        run: pytest -m "not slow" --durations=10
+
+  pipeline:
+    # Proves the pipeline runs end to end from a cold clone. Uses the reduced
+    # simulator configuration so CI stays under a few minutes; the assertions
+    # are the same ones the full run makes.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Generate reduced dataset
+        run: python -m nova.simulator.run --small
+
+      - name: Build warehouse and enforce data quality
+        # --strict makes any data-quality failure fail the build rather than
+        # printing a warning and training a model on bad data.
+        run: python -m nova.warehouse.build --strict
+
+      - name: Build features
+        run: |
+          python - <<'PY'
+          import duckdb
+          from nova.config import DUCKDB_PATH
+          from nova.features.build import build_features
+          con = duckdb.connect(str(DUCKDB_PATH))
+          n = build_features(con)
+          assert n > 0, "feature table is empty"
+          print(f"{n:,} feature rows")
+          con.close()
+          PY

@@ -69,15 +69,35 @@ WITH base AS (
 -- Hierarchy aggregates are lagged exactly like the series itself. An
 -- unlagged regional total would carry same-day information from sibling
 -- branches -- a subtle, common, and fatal leak.
+--
+-- The LAG must be applied HERE, at the (region, drug, date) grain where each
+-- date appears exactly once. An earlier version aggregated here and lagged
+-- after joining back to the branch-level rows; that partition contains one
+-- row per branch per date, so LAG(1) returned an arbitrary sibling branch's
+-- row from the SAME date rather than the previous date -- leaking today's
+-- regional demand into today's features. tests/test_leakage.py caught it on
+-- 482 region_lag rows and 2,078 national_lag rows.
 regional AS (
     SELECT b.region, f.drug_id, f.date_key,
            SUM(f.{target_col}) AS region_units
     FROM base f JOIN mart.dim_branch b USING (branch_id)
     GROUP BY 1, 2, 3
 ),
+regional_lagged AS (
+    SELECT region, drug_id, date_key,
+           LAG(region_units, {LAG}) OVER (
+               PARTITION BY region, drug_id ORDER BY date_key) AS region_lag
+    FROM regional
+),
 national AS (
     SELECT drug_id, date_key, SUM({target_col}) AS national_units
     FROM base GROUP BY 1, 2
+),
+national_lagged AS (
+    SELECT drug_id, date_key,
+           LAG(national_units, {LAG}) OVER (
+               PARTITION BY drug_id ORDER BY date_key) AS national_lag
+    FROM national
 ),
 windowed AS (
     SELECT
@@ -89,8 +109,14 @@ windowed AS (
 {roll_cols},
         -- Days since the last non-zero sale: the single most informative
         -- feature for intermittent series, and what Croston implicitly models.
-        base.date_key - MAX(CASE WHEN base.{target_col} > 0 THEN base.date_key END)
-            OVER (w ROWS BETWEEN UNBOUNDED PRECEDING AND {LAG} PRECEDING)
+        --
+        -- DATE_DIFF, not date subtraction: in DuckDB `date - date` yields an
+        -- INTERVAL, which arrives in pandas as timedelta64 and makes LightGBM
+        -- fail with a DTypePromotionError rather than a useful message.
+        DATE_DIFF('day',
+            MAX(CASE WHEN base.{target_col} > 0 THEN base.date_key END)
+                OVER (w ROWS BETWEEN UNBOUNDED PRECEDING AND {LAG} PRECEDING),
+            base.date_key)::INTEGER
             AS days_since_last_sale,
         -- Recent stockout pressure: a series that has been stocking out is
         -- one whose observed history understates demand.
@@ -113,20 +139,18 @@ SELECT
     dr.category, dr.criticality, dr.abc_tier, dr.pack_size,
     dr.unit_cost, dr.unit_margin, dr.shelf_life_days, dr.is_controlled,
     br.region, br.scale AS branch_scale, br.weekend_factor,
-    -- Lagged hierarchy context.
-    LAG(rg.region_units, {LAG}) OVER (
-        PARTITION BY br.region, w.drug_id ORDER BY w.date_key)   AS region_lag,
-    LAG(nt.national_units, {LAG}) OVER (
-        PARTITION BY w.drug_id ORDER BY w.date_key)              AS national_lag
+    -- Lagged hierarchy context, already shifted at the correct grain above.
+    rg.region_lag,
+    nt.national_lag
 FROM windowed w
 JOIN mart.dim_date   dd ON dd.date_key = w.date_key
 JOIN mart.dim_drug   dr USING (drug_id)
 JOIN mart.dim_branch br USING (branch_id)
-LEFT JOIN regional rg ON rg.region = br.region
-                     AND rg.drug_id = w.drug_id
-                     AND rg.date_key = w.date_key
-LEFT JOIN national nt ON nt.drug_id = w.drug_id
-                     AND nt.date_key = w.date_key
+LEFT JOIN regional_lagged rg ON rg.region = br.region
+                            AND rg.drug_id = w.drug_id
+                            AND rg.date_key = w.date_key
+LEFT JOIN national_lagged nt ON nt.drug_id = w.drug_id
+                            AND nt.date_key = w.date_key
 """
 
 
