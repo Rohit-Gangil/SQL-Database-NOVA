@@ -10,6 +10,29 @@ not WAPE.
 
 📊 **[Results with error bars →](docs/RESULTS.md)**  ·  🧪 **[How the data is generated →](docs/SIMULATOR.md)**  ·  🔒 **[Leakage controls →](docs/LEAKAGE.md)**
 
+## Headline
+
+| | Incumbent fixed-ROP | NOVA (newsvendor + LightGBM) |
+|---|---:|---:|
+| Fill rate | 97.74% | **99.74%** |
+| Units unmet (184 days) | 17,410 | **2,041** (−88%) |
+| Total cost | ₹2,080,639 | **₹401,010 (−80.7%)** |
+
+**The interesting part is where that saving came from.** LightGBM beat the best
+classical baseline by only **1.6% WAPE** — because the irreducible-error floor on this
+data is WAPE 0.883 and the best classical method was already at 0.907. There was only
+0.024 of reducible error available, and the model captured 59% of it.
+
+Almost all the value came from the **decision layer**, not a better model: replacing
+one chain-wide safety factor with a per-SKU newsvendor critical ratio. The direction
+holds across a 16× sweep of the key cost assumption (−54% to −90%); the specific
+percentage does not, and [docs/RESULTS.md](docs/RESULTS.md) says so in those words.
+
+A negative result kept in the table: **training on the censoring-corrected target made
+WAPE slightly worse** (0.8928 vs 0.8854) while cutting forecast bias 4× (−0.062 →
+−0.015). For a system whose output is an order quantity, that is the right trade —
+a systematically low forecast under-orders, causes a stockout, and feeds on itself.
+
 ---
 
 ## Why this problem
@@ -156,6 +179,7 @@ first — [docs/DECISIONS.md](docs/DECISIONS.md) D-006):
 | Phase | Status |
 |---|---|
 | Rung 3 — TFT / N-BEATS | Not built. No GPU; torch out of scope this pass. |
+| Hierarchical reconciliation (MinT/OLS) | **Not built**, though P1 planned it. The hierarchy rollups and coherence checks exist in the warehouse, but forecasts are produced per series and are not reconciled. |
 | P7 — GNN anomaly detection | Not built. Ground-truth labels **are** generated and ready. |
 | P8 — Causal inference / uplift | Not built. True treatment effect **is** generated. |
 | P9 — FastAPI + ONNX serving | Not built. No latency numbers are claimed. |

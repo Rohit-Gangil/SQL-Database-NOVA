@@ -61,26 +61,45 @@ def build_policy_table(summary: dict) -> str:
         ("**Total cost**", inc["total_cost"], nov["total_cost"]),
     ]
     lines = [
-        "| Cost component | Incumbent fixed-ROP | Newsvendor + LightGBM | Change |",
+        "| | Incumbent fixed-ROP | Newsvendor + LightGBM | Change |",
         "|---|---:|---:|---:|",
     ]
     for name, a, b in rows:
         chg = (b - a) / a if a else float("nan")
         lines.append(f"| {name} | ₹{a:,.0f} | ₹{b:,.0f} | {chg:+.1%} |")
     lines.append(
-        f"| Fill rate | {inc['fill_rate']:.1%} | {nov['fill_rate']:.1%} | "
-        f"{nov['fill_rate'] - inc['fill_rate']:+.1%} pts |"
+        f"| Fill rate | {inc['fill_rate']:.2%} | {nov['fill_rate']:.2%} | "
+        f"{100 * (nov['fill_rate'] - inc['fill_rate']):+.2f} pts |"
     )
     lines.append(
         f"| Units unmet | {inc['units_unmet']:,.0f} | {nov['units_unmet']:,.0f} | "
         f"{(nov['units_unmet'] - inc['units_unmet']) / max(inc['units_unmet'], 1):+.1%} |"
     )
+    lines.append(
+        f"| Units expired | {inc['units_expired']:,.0f} | {nov['units_expired']:,.0f} | "
+        f"{(nov['units_expired'] - inc['units_expired']) / max(inc['units_expired'], 1):+.1%} |"
+    )
+    return "\n".join(lines)
+
+
+def build_sensitivity_table(sens: pd.DataFrame) -> str:
+    lines = [
+        "| Stockout penalty × | Incumbent total | Newsvendor total | Change | Newsvendor fill |",
+        "|---:|---:|---:|---:|---:|",
+    ]
+    for r in sens.itertuples(index=False):
+        mark = " **(base)**" if r.penalty_scale == 1.0 else ""
+        lines.append(
+            f"| {r.penalty_scale:g}×{mark} | ₹{r.incumbent_total:,.0f} | "
+            f"₹{r.newsvendor_total:,.0f} | {r.change:+.1%} | {r.newsvendor_fill:.2%} |"
+        )
     return "\n".join(lines)
 
 
 def main() -> None:
     df = pd.read_csv(ARTIFACT_DIR / "backtest_per_origin.csv")
     summary = json.loads((ARTIFACT_DIR / "policy_summary.json").read_text())
+    sens = pd.read_csv(ARTIFACT_DIR / "policy_sensitivity.csv")
     k_hat = float((ARTIFACT_DIR / "dispersion.txt").read_text())
 
     best_classical = min(
@@ -93,7 +112,6 @@ def main() -> None:
     sales_only_wape = np.nanmean(df["lightgbm_sales_only__wape"])
 
     lift = (bc_wape - lgbm_wape) / bc_wape
-    censor_gain = (sales_only_wape - lgbm_wape) / sales_only_wape
     gap_closed = (bc_wape - lgbm_wape) / max(bc_wape - floor_wape, 1e-9)
 
     delta = summary["total_cost_change"]
@@ -130,12 +148,39 @@ between the best classical method and that floor.
 
 ### What the ladder shows
 
-- The best classical method is **{best_classical}** at WAPE {bc_wape:.4f}.
-- LightGBM reaches **{lgbm_wape:.4f}**, a **{lift:.1%}** relative improvement.
-- Correcting for censoring is worth **{censor_gain:.1%}**: the model trained on raw
-  `units_sold` scores {sales_only_wape:.4f} against {lgbm_wape:.4f} for the corrected
-  target. Its bias is the tell — training on censored sales produces a systematically
-  low forecast, which is precisely the mechanism that turns one stockout into the next.
+- The best classical method is **{best_classical}** at WAPE {bc_wape:.4f} — the
+  trailing 28-day mean, which beats Croston and SBA. That is a real finding, not a
+  bug: on series this lumpy, Croston's separate size/interval smoothing buys nothing
+  over a plain mean, and its positive bias ({np.nanmean(df['croston__bias']):+.3f}) costs it.
+  TSB comes closest of the three, as expected, because it decays for dead items.
+- LightGBM reaches **{lgbm_wape:.4f}**, a **{lift:.1%}** relative improvement over the
+  best classical method. **That is a small gain, and it should be.** The oracle floor
+  is {floor_wape:.4f}: the total reducible error available to *any* model was only
+  {bc_wape - floor_wape:.4f} WAPE, and LightGBM captured {gap_closed:.0%} of it. This
+  data is dominated by irreducible noise, which is what intermittent pharmacy demand
+  actually looks like. A model claiming a large WAPE win here would be suspect.
+
+### A negative result: the censoring correction makes WAPE worse
+
+| | WAPE | Bias |
+|---|---:|---:|
+| Trained on raw `units_sold` | {sales_only_wape:.4f} | {np.nanmean(df['lightgbm_sales_only__bias']):+.3f} |
+| Trained on censoring-corrected target | {lgbm_wape:.4f} | {np.nanmean(df['lightgbm__bias']):+.3f} |
+
+Training on raw sales gives **better WAPE** ({sales_only_wape:.4f} vs {lgbm_wape:.4f})
+and **four times the bias** ({np.nanmean(df['lightgbm_sales_only__bias']):+.3f} vs
+{np.nanmean(df['lightgbm__bias']):+.3f}). I expected the correction to improve both.
+It did not, and the table says so.
+
+The interpretation matters more than the number. WAPE is symmetric; the inventory
+decision is not. A model that is systematically **low** by 6% does not merely
+mis-forecast — it under-orders, causes a stockout, observes the censored sale, and
+forecasts lower again. That feedback loop is invisible to WAPE and fatal in
+production. The corrected target trades a little accuracy for a forecast that is
+nearly unbiased, which is the right trade for a system whose output is an order
+quantity.
+
+This is why the decision layer, not the accuracy table, is the primary evaluation.
 
 ### Deep learning is not in this table
 
@@ -173,14 +218,55 @@ This is the substantive claim of the project: **a single chain-wide safety facto
 what the incumbent uses — cannot be right for both a cardiac drug and a vitamin.**
 The per-SKU critical ratio is what a forecast enables.
 
+Evaluated over a continuous **{summary['window_days']}-day** window
+(2025-07-01 → 2025-12-31), with the order-up-to level refreshed monthly from the
+latest forecast — retrain monthly, order weekly.
+
 {build_policy_table(summary)}
 
-**Total cost change: {delta:+.2%}** (95% CI {ci_lo:+.2%}, {ci_hi:+.2%}), from a paired
-bootstrap over the {len(SPLIT.backtest_origins)} matched backtest origins.
+**Total cost change: {delta:+.2%}** (95% CI {ci_lo:+.2%}, {ci_hi:+.2%}, bootstrap over
+series).
 
-Both policies were evaluated by the same simulation function against the same true
-demand over the same window, so every simplification in that simulator applies
-equally to both and cannot favour either.
+### Read this before quoting that number
+
+The saving is **dominated by the stockout term**, and the stockout penalty multipliers
+are a modelling choice, not a measurement. A result that survives only at my chosen
+values is not a result, so the penalty was swept across a 16× range:
+
+{build_sensitivity_table(sens)}
+
+**What is robust:** the direction and the mechanism. Across the whole sweep — even at
+a quarter of the assumed penalty, where an unmet unit costs roughly its lost margin
+and nothing more — the newsvendor policy wins by **{sens['change'].max():+.0%} or better**.
+Per-SKU service levels beat a flat safety factor, and they beat it because the flat
+factor cannot be simultaneously right for a criticality-5 cardiac drug and a
+criticality-1 vitamin.
+
+**What is not robust:** the specific percentage. Read "{delta:+.0%}" as *under these
+cost assumptions*, not as a forecast of realisable savings. The operationally
+meaningful figure is the fill rate: **{summary['incumbent']['fill_rate']:.2%} →
+{summary['newsvendor']['fill_rate']:.2%}**, bought with
+{(summary['newsvendor']['holding_cost'] / summary['incumbent']['holding_cost'] - 1):+.0%}
+holding cost and {(summary['newsvendor']['units_expired'] / max(summary['incumbent']['units_expired'], 1) - 1):+.0%}
+expiry. That is a real trade, and it is the trade the newsvendor is explicitly making.
+
+### Two evaluation bugs found and fixed here
+
+Recorded because the first version of this comparison produced a number that looked
+good and was wrong:
+
+1. **A 14-day evaluation window made waste structurally zero.** Effective shelf lives
+   start at 72 days, so nothing could expire inside one horizon. With one of the three
+   cost terms dead, over-ordering was free and the newsvendor "won" by 79% — an
+   artefact of the window, not a property of the policy. Fixed by stitching the six
+   origins into one continuous 184-day simulation where expiry actually binds.
+2. **The incumbent baseline was leaking.** Its reorder point was reconstructed from a
+   mean computed over the *whole* period, including the future, which raised its fill
+   rate from the simulator's 92.3% to 98.9% and made it a different policy from the
+   one being compared against. It now sees only trailing data.
+
+Both policies are driven through the same simulation function against the same true
+demand over the same window, so every simplification applies equally to both.
 
 ## Limitations
 
