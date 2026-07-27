@@ -1,0 +1,49 @@
+# NOVA · Layer 0 (OLTP)
+#
+# NOTE ON VERIFICATION: this file has NOT been executed. The machine this
+# repository was built on has no Docker installed (see docs/DECISIONS.md
+# D-005). It is written to be correct and is the intended production path,
+# but until someone runs it, treat it as unverified. The DuckDB pipeline in
+# `nova/` runs with no infrastructure and IS verified.
+#
+#   docker compose up -d && make db-init
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nova-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nova}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nova_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-nova}
+      # Deterministic collation: index order and ORDER BY results should not
+      # depend on the host locale.
+      LANG: C
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Auto-run DDL on first boot, in filename order.
+      - ./db/ddl:/docker-entrypoint-initdb.d/01-ddl:ro
+      - ./db/functions:/docker-entrypoint-initdb.d/02-functions:ro
+      - ./db/indexes:/docker-entrypoint-initdb.d/03-indexes:ro
+      - ./db/policies:/docker-entrypoint-initdb.d/04-policies:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nova} -d ${POSTGRES_DB:-nova}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    # Tuned for a laptop running a 5M-row backtest, not for production.
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=64MB
+      -c maintenance_work_mem=256MB
+      -c max_wal_size=2GB
+      -c random_page_cost=1.1
+      -c track_io_timing=on
+
+volumes:
+  pgdata:

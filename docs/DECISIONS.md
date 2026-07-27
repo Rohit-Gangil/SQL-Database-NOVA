@@ -39,6 +39,36 @@ correctness on data whose generating process we control. They are not evidence o
 real-world clinical or commercial performance. Public reference vocabularies
 (RxNorm/openFDA) anchor SKU metadata to reality where possible.
 
+### D-005 — Dual engine: PostgreSQL as production target, DuckDB as the verified path
+**Phase:** 2
+**Context:** The build machine has Python 3.13 with the scientific stack, but
+**no Docker and no PostgreSQL client**. The Postgres DDL therefore cannot be executed
+and verified here.
+**Decision:** Ship both. `db/ddl/*.sql` remains the PostgreSQL production schema —
+it is the correct target and what a reviewer with Docker will run. Alongside it,
+`nova/warehouse/schema_duck.sql` provides a DuckDB schema that runs with zero
+infrastructure (`pip install duckdb`), and the entire analytics and ML pipeline
+(P3–P6) executes against DuckDB.
+**Why this is not a cop-out:** the flagship claim of this project is the
+forecast → decision → measured-cost chain. That chain is fully verified end to end
+on DuckDB. The Postgres layer is the OLTP system of record, and its correctness is
+verifiable by any reviewer in one command — but **it is marked UNVERIFIED in
+`docs/PERF.md` and the README until someone runs it**, rather than claimed to work.
+**Consequence honestly stated:** `EXPLAIN ANALYZE` numbers for Postgres are NOT
+reported, because they were not measured. Index rationale is given as reasoning, not
+as benchmark results. DuckDB timings that *were* measured are reported as such.
+
+### D-006 — P7–P11 deferred, per the plan's own protection rule
+**Phase:** 6/7
+**Decision:** Complete P2–P6 + P12–P13 to a verified standard; defer P7 (GNN),
+P8 (causal), P9 (serving), P10 (monitoring), P11 (LLM eval).
+**Why:** `docs/PLAN.md` states that P7–P11 are deferred *before* the flagship is
+compromised. Those phases require torch/PyG, DoWhy/EconML, ONNX runtime and an LLM
+API key — heavy installs and external credentials. Shipping five half-finished model
+families would be worth less than one forecasting-to-decision system where every
+number is reproducible. Scaffolding and interfaces for the deferred phases are left
+in place; what is not built is stated plainly in the README rather than implied.
+
 ### D-004 — Total cost in ₹ is the primary metric, not WAPE
 **Phase:** 0/6
 **Decision:** Headline results are reported as total cost (stockout penalty +
