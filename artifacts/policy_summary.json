@@ -1,0 +1,24 @@
+{
+  "total_cost_change": -0.8072658549702545,
+  "ci_low": -0.8260042441952662,
+  "ci_high": -0.7905461883138525,
+  "window_days": 184,
+  "incumbent": {
+    "fill_rate": 0.9774192586097994,
+    "units_unmet": 17410.0,
+    "units_expired": 68.0,
+    "stockout_cost": 1895861.69,
+    "holding_cost": 181977.233875,
+    "waste_cost": 2799.6,
+    "total_cost": 2080638.523875
+  },
+  "newsvendor": {
+    "fill_rate": 0.997352826353969,
+    "units_unmet": 2041.0,
+    "units_expired": 109.0,
+    "stockout_cost": 148790.02,
+    "holding_cost": 247814.22701499998,
+    "waste_cost": 4405.84,
+    "total_cost": 401010.087015
+  }
+}

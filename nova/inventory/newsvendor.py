@@ -102,79 +102,10 @@ def compute_policy_table(dim: pd.DataFrame, cfg: SimConfig,
     return out
 
 
-def simulate_policy_cost(
-    demand_true: np.ndarray,      # (n_series, n_days) true demand
-    order_up_to: np.ndarray,      # (n_series,) target stock level
-    unit_cost: np.ndarray,
-    unit_margin: np.ndarray,
-    criticality: np.ndarray,
-    shelf_life_days: np.ndarray,
-    cfg: SimConfig,
-    review_days: int,
-    lead_days: int,
-) -> dict[str, float]:
-    """Run an order-up-to policy against true demand and cost the outcome.
-
-    Deliberately simplified against the full simulator -- no lot-level FEFO,
-    expiry approximated at the cycle level -- because its job is a *like-for-
-    like* comparison between policies, not to re-simulate reality. Both the
-    incumbent and NOVA are evaluated through this identical function, so any
-    modelling shortcut applies equally to both and cannot favour either.
-    """
-    n_s, n_t = demand_true.shape
-    on_hand = order_up_to.astype(float).copy()
-    pipeline = np.zeros((n_s, n_t + lead_days + 1))
-
-    tot_sold = np.zeros(n_s)
-    tot_unmet = np.zeros(n_s)
-    tot_expired = np.zeros(n_s)
-    tot_holding = np.zeros(n_s)
-
-    # Age of the stock currently held, for the cycle-level expiry rule.
-    age = np.zeros(n_s)
-
-    for t in range(n_t):
-        on_hand += pipeline[:, t]
-        # Received stock refreshes the average age of what is held.
-        age += 1.0
-
-        d = demand_true[:, t].astype(float)
-        sold = np.minimum(on_hand, d)
-        on_hand -= sold
-        tot_sold += sold
-        tot_unmet += d - sold
-
-        # Expire stock older than its shelf life.
-        too_old = age > shelf_life_days
-        tot_expired += np.where(too_old, on_hand, 0.0)
-        on_hand = np.where(too_old, 0.0, on_hand)
-        age = np.where(too_old, 0.0, age)
-
-        tot_holding += on_hand * unit_cost * cfg.holding_cost_rate_daily
-
-        if t % review_days == 0:
-            position = on_hand + pipeline[:, t + 1:].sum(axis=1)
-            need = np.maximum(order_up_to - position, 0.0)
-            arrive = t + lead_days
-            if arrive < pipeline.shape[1]:
-                pipeline[:, arrive] += need
-                # New stock lowers the average age of the holding.
-                age *= 0.5
-
-    penalty_mult = np.array(
-        [cfg.stockout_penalty_by_criticality[int(c)] for c in criticality],
-        dtype=float,
-    )
-    stockout_cost = tot_unmet * unit_margin * penalty_mult
-    waste_cost = tot_expired * unit_cost
-
-    demand_total = demand_true.sum()
-    return {
-        "fill_rate": float(tot_sold.sum() / max(demand_total, 1)),
-        "units_unmet": float(tot_unmet.sum()),
-        "units_expired": float(tot_expired.sum()),
-        "stockout_cost": float(stockout_cost.sum()),
-        "holding_cost": float(tot_holding.sum()),
-        "waste_cost": float(waste_cost.sum()),
-        "total_cost": float(stockout_cost.sum() + tot_holding.sum() + waste_cost.sum()),
-    }
+# NOTE: `simulate_policy_cost` was removed here (audit M-1).
+#
+# It was a second, simplified policy simulator that only the tests exercised --
+# the shipped headline number came from a different implementation with a
+# different (and badly wrong, see C-1) expiry model. Both now go through
+# `nova.inventory.lots.simulate_order_up_to`, so the economics the tests assert
+# are the economics that actually run.

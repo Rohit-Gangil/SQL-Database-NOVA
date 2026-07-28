@@ -42,9 +42,21 @@ data/external/
 
 # --- Models & experiment tracking ---
 models/
-artifacts/
+# Large model artifacts stay out; the small CSV/JSON that back every reported
+# number are committed so a reviewer can check them without a 25-minute rerun
+# (audit M-5), and so the static site can be built from a clone.
+artifacts/*
+!artifacts/*.csv
+!artifacts/*.json
+!artifacts/*.txt
 mlruns/
-mlartifacts/
+ml# Large model artifacts stay out; the small CSV/JSON that back every reported
+# number are committed so a reviewer can check them without a 25-minute rerun
+# (audit M-5), and so the static site can be built from a clone.
+artifacts/*
+!artifacts/*.csv
+!artifacts/*.json
+!artifacts/*.txt
 *.onnx
 *.pkl
 *.joblib

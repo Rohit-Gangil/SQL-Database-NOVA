@@ -38,7 +38,7 @@ import pandas as pd
 
 from nova.config import ARTIFACT_DIR, DUCKDB_PATH, SIM, SPLIT
 from nova.forecast import gbm
-from nova.inventory import newsvendor
+from nova.inventory import lots, newsvendor
 
 TRAILING_DAYS = 28
 
@@ -83,77 +83,23 @@ def simulate_continuous(
     dim: pd.DataFrame,
     cfg=SIM,
 ) -> dict[str, float]:
-    """Order-up-to simulation with a monthly-refreshed target level.
+    """Thin wrapper over the shared lot-level simulator.
 
-    Returns cost decomposed into stockout, holding and waste.
+    Audit C-1/M-1: this used to carry its own average-age expiry approximation
+    that under-counted waste ~200x, and it was a second implementation that no
+    test exercised. Both policies and the tests now go through
+    `nova.inventory.lots.simulate_order_up_to`.
     """
-    n_s, n_t = demand_true.shape
-    unit_cost = dim["unit_cost"].to_numpy()
-    unit_margin = dim["unit_margin"].to_numpy()
-    shelf = dim["shelf_life_days"].to_numpy().astype(float)
-    # Stock arrives part-used, exactly as the simulator models it (D-003).
-    effective_shelf = np.maximum(shelf * 0.6, 30.0)
-
-    review = cfg.incumbent_review_days
-    lead = cfg.default_lead_time_days
-
-    on_hand = levels_by_month[0].astype(float).copy()
-    age = np.zeros(n_s)
-    pipeline = np.zeros((n_s, n_t + lead + 1))
-
-    tot_sold = np.zeros(n_s)
-    tot_unmet = np.zeros(n_s)
-    tot_expired = np.zeros(n_s)
-    tot_holding = np.zeros(n_s)
-
-    for t in range(n_t):
-        arriving = pipeline[:, t]
-        # New stock lowers the average age of what is held, weighted by volume.
-        total = on_hand + arriving
-        with np.errstate(invalid="ignore", divide="ignore"):
-            age = np.where(total > 0, (age * on_hand) / np.maximum(total, 1e-9), 0.0)
-        on_hand = total
-        age += 1.0
-
-        # Expiry. Over a 184-day window with effective shelf lives from 30 days
-        # this actually binds, which is the whole reason the window was extended.
-        too_old = age > effective_shelf
-        tot_expired += np.where(too_old, on_hand, 0.0)
-        on_hand = np.where(too_old, 0.0, on_hand)
-        age = np.where(too_old, 0.0, age)
-
-        d = demand_true[:, t].astype(float)
-        sold = np.minimum(on_hand, d)
-        on_hand -= sold
-        tot_sold += sold
-        tot_unmet += d - sold
-
-        tot_holding += on_hand * unit_cost * cfg.holding_cost_rate_daily
-
-        if t % review == 0:
-            level = levels_by_month[month_index[t]]
-            position = on_hand + pipeline[:, t + 1:].sum(axis=1)
-            need = np.maximum(level - position, 0.0)
-            arrive = t + lead
-            if arrive < pipeline.shape[1]:
-                pipeline[:, arrive] += need
-
-    penalty = np.array(
-        [cfg.stockout_penalty_by_criticality[int(c)] for c in dim["criticality"]],
-        dtype=float,
+    return lots.simulate_order_up_to(
+        demand_true=demand_true,
+        levels_by_period=levels_by_month,
+        period_index=month_index,
+        unit_cost=dim["unit_cost"].to_numpy(),
+        unit_margin=dim["unit_margin"].to_numpy(),
+        criticality=dim["criticality"].to_numpy(),
+        shelf_life_days=dim["shelf_life_days"].to_numpy(),
+        cfg=cfg,
     )
-    stockout_cost = tot_unmet * unit_margin * penalty
-    waste_cost = tot_expired * unit_cost
-
-    return {
-        "fill_rate": float(tot_sold.sum() / max(demand_true.sum(), 1)),
-        "units_unmet": float(tot_unmet.sum()),
-        "units_expired": float(tot_expired.sum()),
-        "stockout_cost": float(stockout_cost.sum()),
-        "holding_cost": float(tot_holding.sum()),
-        "waste_cost": float(waste_cost.sum()),
-        "total_cost": float(stockout_cost.sum() + tot_holding.sum() + waste_cost.sum()),
-    }
 
 
 def main() -> None:

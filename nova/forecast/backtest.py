@@ -83,49 +83,85 @@ def load_matrices(con) -> tuple[np.ndarray, np.ndarray, SeriesIndex, pd.DataFram
 # Rungs 0-1: classical methods, computed per series from observed history
 # ---------------------------------------------------------------------
 def run_baselines(observed: np.ndarray, o_pos: int, horizon: int) -> dict[str, np.ndarray]:
-    n_s = observed.shape[0]
-    out = {name: np.zeros((n_s, horizon), dtype=np.float32)
-           for name in ("naive", "seasonal_naive", "mean_28", "croston", "sba", "tsb")}
+    """Vectorised across series (audit m-3).
 
-    for i in range(n_s):
-        hist = observed[i, :o_pos]
-        out["naive"][i] = baselines.naive(hist, horizon)
-        out["seasonal_naive"][i] = baselines.seasonal_naive(hist, horizon, 7)
-        out["mean_28"][i] = baselines.mean_forecast(hist, horizon, 28)
-        out["croston"][i] = baselines.croston(hist, horizon, variant="croston")
-        out["sba"][i] = baselines.croston(hist, horizon, variant="sba")
-        out["tsb"][i] = baselines.croston(hist, horizon, variant="tsb")
-    return out
+    The per-series reference implementations still live in `baselines.py` and
+    `tests/test_baselines_vectorised.py` asserts these agree with them, so the
+    speedup cannot silently change a reported number.
+    """
+    hist = observed[:, :o_pos]
+    return {
+        "naive": baselines.naive_batch(hist, horizon).astype(np.float32),
+        "seasonal_naive": baselines.seasonal_naive_batch(hist, horizon, 7).astype(np.float32),
+        "mean_28": baselines.mean_batch(hist, horizon, 28).astype(np.float32),
+        "croston": baselines.croston_batch(hist, horizon, variant="croston").astype(np.float32),
+        "sba": baselines.croston_batch(hist, horizon, variant="sba").astype(np.float32),
+        "tsb": baselines.croston_batch(hist, horizon, variant="tsb").astype(np.float32),
+    }
 
 
 # ---------------------------------------------------------------------
 # Rung 2: global LightGBM
 # ---------------------------------------------------------------------
+def _predict_window(con, model, lo: pd.Timestamp, hi: pd.Timestamp,
+                    feature_cols: list[str], n_s: int) -> np.ndarray:
+    """Predict over [lo, hi] and reshape to (n_series, n_days).
+
+    The reshape assumes a complete rectangular panel. That is guaranteed by the
+    ORDER BY plus the warehouse's no-date-gaps data-quality check, but it is
+    asserted here anyway (audit m-2): a silent misalignment would corrupt every
+    metric downstream while looking perfectly normal.
+    """
+    cols = ", ".join(feature_cols)
+    frame = con.execute(f"""
+        SELECT branch_id, drug_id, date_key, {cols}
+        FROM mart.features
+        WHERE date_key BETWEEN DATE '{lo.date()}' AND DATE '{hi.date()}'
+        ORDER BY branch_id, drug_id, date_key
+    """).df()
+
+    n_days = (hi - lo).days + 1
+    if len(frame) != n_s * n_days:
+        raise ValueError(
+            f"expected {n_s} x {n_days} = {n_s * n_days} rows for "
+            f"[{lo.date()}, {hi.date()}], got {len(frame)}. The panel is not "
+            "rectangular -- reshaping would silently misalign series."
+        )
+    preds = gbm.predict_mean(model, frame, feature_cols)
+    return preds.astype(np.float32).reshape(n_s, n_days)
+
+
 def run_gbm(con, origin: pd.Timestamp, horizon: int, target_col: str,
-            idx: SeriesIndex, feature_cols: list[str]) -> tuple[np.ndarray, object]:
+            idx: SeriesIndex, feature_cols: list[str],
+            calib_days: int = 28) -> tuple[np.ndarray, np.ndarray, object]:
+    """Returns (eval_preds, calibration_preds, model).
+
+    The calibration predictions cover the `calib_days` immediately before the
+    origin: after training (so out-of-sample) and before evaluation (so disjoint
+    from what the intervals are scored on). Audit item M-2 -- dispersion was
+    previously estimated on the evaluation window itself, which made any
+    coverage figure optimistic by construction.
+    """
     end = origin + pd.Timedelta(days=horizon - 1)
     cols = ", ".join(feature_cols)
+    n_s = len(idx.keys)
+
+    calib_lo = origin - pd.Timedelta(days=calib_days)
+    calib_hi = origin - pd.Timedelta(days=1)
 
     train = con.execute(f"""
         SELECT {cols}, {target_col} AS y
         FROM mart.features
-        WHERE date_key < DATE '{origin.date()}'
+        WHERE date_key < DATE '{calib_lo.date()}'
           AND lag_28 IS NOT NULL
         USING SAMPLE {TRAIN_SAMPLE_ROWS} ROWS (reservoir, 42)
     """).df()
 
     model = gbm.fit_gbm(train, feature_cols, "y")
 
-    test = con.execute(f"""
-        SELECT branch_id, drug_id, date_key, {cols}
-        FROM mart.features
-        WHERE date_key BETWEEN DATE '{origin.date()}' AND DATE '{end.date()}'
-        ORDER BY branch_id, drug_id, date_key
-    """).df()
-
-    preds = gbm.predict_mean(model, test, feature_cols)
-    n_s = len(idx.keys)
-    return preds.astype(np.float32).reshape(n_s, horizon), model
+    eval_preds = _predict_window(con, model, origin, end, feature_cols, n_s)
+    calib_preds = _predict_window(con, model, calib_lo, calib_hi, feature_cols, n_s)
+    return eval_preds, calib_preds, model
 
 
 # ---------------------------------------------------------------------
@@ -142,6 +178,33 @@ def evaluate(actual: np.ndarray, pred: np.ndarray,
     }
 
 
+def evaluate_probabilistic(actual: np.ndarray, mean_pred: np.ndarray,
+                           k: float) -> dict[str, float]:
+    """Calibration and sharpness of the negative-binomial predictive distribution.
+
+    Audit item C-2: `docs/RESULTS.md` claimed these were reported when nothing
+    computed them. Coverage is the honest test of the distributional assumption
+    -- if a nominal 90% interval does not contain the truth ~90% of the time, the
+    assumption is wrong and the newsvendor quantiles that depend on it are wrong
+    too. Whatever this says gets published.
+    """
+    a = actual.ravel()
+    mu = mean_pred.ravel()
+    out: dict[str, float] = {}
+
+    for nominal, (lo_q, hi_q) in {80: (0.10, 0.90), 90: (0.05, 0.95)}.items():
+        lo = gbm.nbinom_quantile(mu, k, lo_q)
+        hi = gbm.nbinom_quantile(mu, k, hi_q)
+        out[f"coverage_{nominal}"] = metrics.coverage(a, lo, hi)
+        out[f"width_{nominal}"] = float(np.mean(hi - lo))
+
+    for q in (0.5, 0.9):
+        pred_q = gbm.nbinom_quantile(mu, k, q)
+        out[f"pinball_{int(q * 100)}"] = metrics.pinball_loss(a, pred_q, q)
+
+    return out
+
+
 def main() -> None:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(DUCKDB_PATH), read_only=False)
@@ -155,9 +218,10 @@ def main() -> None:
 
     per_origin: list[dict] = []
     gbm_preds_by_origin: dict[pd.Timestamp, np.ndarray] = {}
-    naive_preds_by_origin: dict[pd.Timestamp, np.ndarray] = {}
     truth_by_origin: dict[pd.Timestamp, np.ndarray] = {}
     dispersion_samples: list[float] = []
+
+    calib_days = 28
 
     for origin in SPLIT.backtest_origins:
         o = pd.Timestamp(origin)
@@ -168,21 +232,26 @@ def main() -> None:
 
         t1 = time.perf_counter()
         base = run_baselines(observed, o_pos, horizon)
-        naive_preds_by_origin[o] = base["seasonal_naive"]
 
         # Trained on censored observations -- all a real system would have.
-        gbm_pred, _model = run_gbm(con, o, horizon, "units_demanded_censored",
-                                   idx, feature_cols)
+        gbm_pred, gbm_calib, _model = run_gbm(
+            con, o, horizon, "units_demanded_censored", idx, feature_cols, calib_days
+        )
         gbm_preds_by_origin[o] = gbm_pred
 
         # Trained on raw sales: the naive pipeline that ignores censoring.
-        gbm_sold, _ = run_gbm(con, o, horizon, "units_sold", idx, feature_cols)
+        gbm_sold, _, _ = run_gbm(con, o, horizon, "units_sold", idx, feature_cols,
+                                 calib_days)
 
-        dispersion_samples.append(
-            gbm.estimate_dispersion(actual.ravel(), gbm_pred.ravel())
-        )
+        # Dispersion from the CALIBRATION window: after training, before
+        # evaluation. Estimating it on the evaluation window (as an earlier
+        # version did) makes coverage optimistic by construction -- audit M-2.
+        calib_actual = true[:, o_pos - calib_days:o_pos]
+        k_origin = gbm.estimate_dispersion(calib_actual.ravel(), gbm_calib.ravel())
+        dispersion_samples.append(k_origin)
 
-        row: dict = {"origin": o.date().isoformat()}
+        row: dict = {"origin": o.date().isoformat(), "dispersion_k": k_origin}
+        row.update(evaluate_probabilistic(actual, gbm_pred, k_origin))
         for name, pred in {**base,
                            "lightgbm": gbm_pred,
                            "lightgbm_sales_only": gbm_sold}.items():
@@ -208,6 +277,7 @@ def main() -> None:
               f"sba={row['sba__wape']:.4f} "
               f"lgbm={row['lightgbm__wape']:.4f} "
               f"floor={row['oracle_mu__wape']:.4f}  "
+              f"cov90={row['coverage_90']:.3f} k={row['dispersion_k']:.2f}  "
               f"({time.perf_counter()-t1:.1f}s)")
 
     results = pd.DataFrame(per_origin)
