@@ -12,28 +12,30 @@ not WAPE.
 
 ## Headline
 
+**[▶ Live dashboard](https://rohit-gangil.github.io/SQL-Database-NOVA/site/)** — self-contained, every figure read from `artifacts/`.
+
 | | Incumbent fixed-ROP | NOVA (newsvendor + LightGBM) |
 |---|---:|---:|
-| Fill rate | 97.74% | **99.74%** |
-| Units unmet (184 days) | 17,410 | **2,041** (−88%) |
-| Total cost | ₹2,080,639 | **₹401,010 (−80.7%)** |
+| Fill rate | 97.74% | **99.75%** |
+| Units unmet (184 days) | 17,412 | **1,963** (-89%) |
+| Total cost | ₹2,084,028 | **₹390,268 (-81.3%)** |
 
-**The interesting part is where that saving came from.** LightGBM beat the best
-classical baseline by only **1.6% WAPE** — because the irreducible-error floor on this
-data is WAPE 0.883 and the best classical method was already at 0.907. There was only
-0.024 of reducible error available, and the model captured 59% of it.
+**Read the caveat with the number.** The saving is dominated by the stockout term,
+and the stockout penalty is an assumption, not a measurement. Swept across a 16×
+range it moves between **−54% and −91%**. The direction and mechanism are robust;
+the specific percentage is not.
 
-Almost all the value came from the **decision layer**, not a better model: replacing
-one chain-wide safety factor with a per-SKU newsvendor critical ratio. The direction
-holds across a 16× sweep of the key cost assumption (−54% to −90%); the specific
-percentage does not, and [docs/RESULTS.md](docs/RESULTS.md) says so in those words.
+**Where the value came from.** LightGBM beat the best classical baseline by only
+**1.5% WAPE** — because the irreducible-error floor is 0.883 and the trailing mean
+was already 0.907. Only 0.024 of reducible error existed. Almost all the value came
+from the **decision layer**: replacing one chain-wide safety factor with a per-SKU
+newsvendor critical ratio.
 
-A negative result kept in the table: **training on the censoring-corrected target made
-WAPE slightly worse** (0.8928 vs 0.8854) while cutting forecast bias 4× (−0.062 →
-−0.015). For a system whose output is an order quantity, that is the right trade —
-a systematically low forecast under-orders, causes a stockout, and feeds on itself.
-
----
+**Results that went against me,** kept in the tables: the censoring correction made
+WAPE slightly *worse* while cutting bias 4×; the trailing 28-day mean beat Croston
+and SBA; and a self-audit found the policy simulator's expiry model was ~200× too
+cheap — fixing it moved the headline by 0.5pp, so the conclusion survived a
+correction it did not need. See [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Why this problem
 
@@ -93,12 +95,13 @@ pip install -e ".[dev]"
 make all          # simulate -> warehouse -> features -> backtest -> policy -> results
 ```
 
-Roughly 8 minutes end to end on a laptop. Then read [docs/RESULTS.md](docs/RESULTS.md) —
+Roughly 40 minutes end to end on a laptop (the backtest dominates). Then read [docs/RESULTS.md](docs/RESULTS.md) —
 every number in it was written by `make results` from measured artifacts, never by hand.
 
 ```bash
-make test         # full suite
+make test         # full suite (47 tests)
 make lint         # ruff
+make site         # rebuild docs/site/index.html from artifacts
 make db-up        # PostgreSQL Layer 0 (see caveat below)
 ```
 
@@ -124,6 +127,12 @@ chains operate. Beating an incompetent baseline proves nothing. The sweep is in
 
 **Negative results stay in.** Where a model fails to beat the rung below, the table
 says so.
+
+**It has been audited against its own claims.** [docs/AUDIT.md](docs/AUDIT.md) is a
+self-review that found 2 critical, 6 major and 5 minor issues — including a results
+document claiming interval coverage that nothing computed, and a policy simulator
+whose expiry model was ~200× too cheap. Both are fixed. Two predictions made in that
+audit turned out wrong and are left in the text rather than reworded.
 
 ## Layer 0: what changed from the original coursework
 

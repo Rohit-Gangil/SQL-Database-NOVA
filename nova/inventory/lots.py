@@ -158,4 +158,11 @@ def simulate_order_up_to(
         "holding_cost": float(tot_holding.sum()),
         "waste_cost": float(waste_cost.sum()),
         "total_cost": float(stockout_cost.sum() + tot_holding.sum() + waste_cost.sum()),
+        # Per-series cost vector, so a bootstrap over SKUs can resample these
+        # directly instead of re-running the whole simulation per replicate.
+        # The naive version re-simulated 400 times, which was affordable with
+        # the old average-age approximation and is not with lot cohorts.
+        "_per_series_cost": stockout_cost + tot_holding + waste_cost,
+        "_per_series_demand": demand_true.sum(axis=1),
+        "_per_series_sold": tot_sold,
     }

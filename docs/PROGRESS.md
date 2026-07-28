@@ -209,3 +209,53 @@ drift and causal phases **is** generated and sits in `nova_truth`, so those phas
 start from a working evaluation harness rather than from zero.
 
 **No numbers are claimed for any deferred phase.**
+
+---
+
+## Audit pass — self-review, fixes, and a hostable site (2026-07-28)
+
+**Built.** `docs/AUDIT.md` (2 critical, 6 major, 5 minor), `docs/FIX-PLAN.md`,
+`nova/inventory/lots.py`, `nova/report/build_site.py`, `docs/site/index.html`,
+`tests/test_baselines_vectorised.py`.
+
+**Fixed.**
+
+| Item | Outcome |
+|---|---|
+| C-1 policy expiry ~200× too cheap | Fixed with lot-cohort FEFO. **Headline moved only −80.73% → −81.27%** |
+| C-2 unmeasured coverage claim | Coverage, interval width and pinball now computed and reported |
+| M-1 two policy simulators | Collapsed to one; tests now exercise the shipped path |
+| M-2 dispersion on eval window | Moved to a 28-day calibration window between train and eval |
+| M-3 CI vs sensitivity framing | Both labelled; sweep given equal prominence |
+| M-5 artifacts unverifiable | Small CSV/JSON committed |
+| m-1, m-2, m-4 | Pins corrected, reshape guarded, dead variable removed |
+| m-3 vectorise baselines | Done, with 8 equivalence tests — **but runtime rose 1,223s → 2,048s** |
+| m-5 no UI | Static self-contained dashboard, GitHub Pages ready |
+
+**Three things went against expectation, and all three are published as such:**
+
+1. **Fixing C-1 barely moved the headline.** I predicted the saving would shrink
+   substantially. Waste is a rounding-error line item under both policies
+   (₹5.4k vs ₹1.90M stockout cost), so a ~200× correction to it changed 0.5pp.
+   The conclusion survived a correction it did not need.
+2. **Interval coverage came back too WIDE, not too narrow.** Nominal 90% measured
+   0.977. Estimated dispersion (k≈1.29) sits below the generating 1.6 because
+   model error inflates the residuals the estimator sees. Consequence: the
+   newsvendor over-orders at high critical ratios, so the reported saving is
+   conservative on that axis.
+3. **Vectorising the baselines did not speed up the backtest.** The diagnosis was
+   wrong — LightGBM and the 5.9M-row feature queries are the bottleneck, and the
+   C-2 fix added a second prediction window per model per origin.
+
+**New finding raised during the fix (C-1b).** The comparison's incumbent is a
+*leaner policy* than the simulator's: it lacks pack-size rounding and the
+minimum-stocking rule, so it expires ~160 units where the simulator expires
+~13,400. Documented as a limitation in RESULTS.md rather than changed, because
+altering the baseline policy now would invalidate the comparison.
+
+**NOT MET.** `docs/PLAN.md` P6 DoD item 6 — the leave-one-group-out feature
+ablation was never run. `FEATURE_GROUPS` scaffolding has been deleted rather than
+left implying almost-finished work. P6 DoD item 4 (hierarchical reconciliation)
+also remains unmet, as previously disclosed.
+
+**Measured.** 47 tests pass, ruff clean, cold clone verified end to end.

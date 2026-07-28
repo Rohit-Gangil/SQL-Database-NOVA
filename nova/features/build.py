@@ -170,22 +170,13 @@ FEATURE_COLUMNS: list[str] = (
     ]
 )
 
-# Feature groups, for the P6 ablation study.
-FEATURE_GROUPS: dict[str, list[str]] = {
-    "lags": [f"lag_{d}" for d in LAG_DAYS],
-    "rolling": (
-        [f"roll_mean_{w}" for w in ROLL_WINDOWS]
-        + [f"roll_sd_{w}" for w in ROLL_WINDOWS]
-        + [f"nonzero_rate_{w}" for w in ROLL_WINDOWS]
-    ),
-    "intermittency": ["days_since_last_sale", "censored_rate_28"],
-    "calendar": ["day_of_week", "day_of_year", "month",
-                 "doy_sin", "doy_cos", "dow_sin", "dow_cos"],
-    "product": ["criticality", "abc_tier", "pack_size", "unit_cost",
-                "unit_margin", "shelf_life_days"],
-    "branch": ["branch_scale", "weekend_factor"],
-    "hierarchy": ["region_lag", "national_lag"],
-}
+# NOTE (audit M-4): `FEATURE_GROUPS` was removed here.
+#
+# It existed to support the leave-one-group-out ablation specified in
+# docs/PLAN.md P6 DoD item 6. That ablation was never run, and dead scaffolding
+# that implies completed work is worse than an honest gap. The P6 DoD item is
+# recorded as NOT MET in docs/PROGRESS.md rather than quietly carried as
+# almost-done.
 
 
 def build_features(con: duckdb.DuckDBPyConnection,

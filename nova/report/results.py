@@ -82,6 +82,74 @@ def build_policy_table(summary: dict) -> str:
     return "\n".join(lines)
 
 
+def build_calibration_block(df: pd.DataFrame) -> str:
+    """Calibration of the predictive distribution.
+
+    Audit C-2: RESULTS.md previously claimed coverage was reported when nothing
+    computed it. This renders whatever the backtest measured -- including a bad
+    result, which is the likely outcome given the independence assumption.
+    """
+    need = {"coverage_80", "coverage_90", "pinball_50", "pinball_90"}
+    if not need.issubset(df.columns):
+        return (
+            "**Not measured.** Interval coverage and pinball loss are not present in\n"
+            "`artifacts/backtest_per_origin.csv`. An earlier version of this document\n"
+            "claimed they were reported when nothing computed them; rather than soften\n"
+            "the wording, the claim is withdrawn until the backtest emits them."
+        )
+
+    c80 = float(np.nanmean(df["coverage_80"]))
+    c90 = float(np.nanmean(df["coverage_90"]))
+    rows = [
+        "| Metric | Measured | Nominal |",
+        "|---|---:|---:|",
+        f"| 80% interval coverage | **{c80:.3f}** | 0.800 |",
+        f"| 90% interval coverage | **{c90:.3f}** | 0.900 |",
+    ]
+    if "width_80" in df.columns:
+        rows.append(f"| Mean 80% interval width | {np.nanmean(df['width_80']):.2f} units | — |")
+        rows.append(f"| Mean 90% interval width | {np.nanmean(df['width_90']):.2f} units | — |")
+    rows.append(f"| Pinball loss @ q50 | {np.nanmean(df['pinball_50']):.4f} | — |")
+    rows.append(f"| Pinball loss @ q90 | {np.nanmean(df['pinball_90']):.4f} | — |")
+    if "dispersion_k" in df.columns:
+        rows.append(f"| Dispersion k | {np.nanmean(df['dispersion_k']):.3f} | — |")
+
+    gap90 = c90 - 0.90
+    if abs(gap90) <= 0.02:
+        verdict = (
+            f"**The intervals are well calibrated.** Nominal 90% coverage measured "
+            f"{c90:.3f}, within 2 points of target, so the negative-binomial assumption "
+            f"holds well enough for the newsvendor quantiles that depend on it."
+        )
+    elif gap90 < 0:
+        verdict = (
+            f"**The intervals are too narrow.** Nominal 90% coverage measured only "
+            f"{c90:.3f} — the truth falls outside the interval "
+            f"{100 * (0.90 - c90):.1f} points more often than it should. This is the "
+            f"predicted direction: daily demand is assumed independent when summed to a "
+            f"horizon, and real demand is autocorrelated, so the horizon variance is "
+            f"understated. The consequence is concrete rather than academic — the "
+            f"newsvendor reads its order quantity off these quantiles, so a too-narrow "
+            f"distribution systematically **under-orders** at high critical ratios. "
+            f"Reported rather than tuned away."
+        )
+    else:
+        verdict = (
+            f"**The intervals are too wide.** Nominal 90% coverage measured {c90:.3f}, "
+            f"above target, so the newsvendor over-orders at high critical ratios and "
+            f"the cost saving reported below is conservative on that axis."
+        )
+
+    return (
+        "\n".join(rows)
+        + "\n\nDispersion is estimated on a **28-day calibration window** sitting between "
+        "the training data and the evaluation window — not on the evaluation window "
+        "itself, which an earlier version did and which made any coverage figure "
+        "optimistic by construction (audit M-2).\n\n"
+        + verdict
+    )
+
+
 def build_sensitivity_table(sens: pd.DataFrame) -> str:
     lines = [
         "| Stockout penalty × | Incumbent total | Newsvendor total | Change | Newsvendor fill |",
@@ -198,10 +266,7 @@ The decision layer needs a distribution, not a point. The LightGBM mean is treat
 the mean of a negative binomial whose dispersion is estimated from held-out
 residuals: **k = {k_hat:.3f}**.
 
-That distributional assumption is tested rather than asserted — interval coverage is
-reported in `artifacts/backtest_per_origin.csv`. Two known sources of over-narrow
-intervals are stated in docs/LEAKAGE.md: dispersion is reused across origins, and
-daily demand is assumed independent when summed to a horizon.
+{build_calibration_block(df)}
 
 ## The decision: forecast → order quantity → money
 
@@ -273,10 +338,18 @@ demand over the same window, so every simplification applies equally to both.
 - **The data is synthetic.** These results demonstrate that the methods work on data
   whose generating process is known. They are not evidence of real-world clinical or
   commercial performance. See docs/SIMULATOR.md for the full generating process.
-- **The policy simulator is simplified** relative to the data generator: no lot-level
-  FEFO, expiry approximated at cycle level. Applied identically to both policies.
+- **The comparison's "incumbent" is a leaner policy than the simulator's.** The data
+  simulator's incumbent applies pack-size rounding and a minimum-stocking rule, which
+  force excess onto slow movers that later expires; the comparison's incumbent applies
+  neither. That is why it expires ~160 units here against ~13,400 in the simulator
+  over the same window. The two should not be read as the same policy. (audit C-1b)
 - **Expiry risk in the overage cost is crude** — a turnover-based approximation, not
-  a lot-level calculation.
+  a lot-level calculation. The *simulation* is lot-level; the *cost formula* driving
+  the critical ratio is not.
+- **The bootstrap CI covers SKU sampling only.** It excludes forecast error, model
+  choice, and the cost assumptions — which dominate, as the sensitivity table shows.
+  A ±2pp interval beside a 36pp parameter sensitivity is the narrow number, not the
+  honest one; read the sweep first.
 - **Lead time is deterministic.** Real lead-time variance is a major driver of
   required safety stock, so the simulated environment is easier than reality.
 - **No cross-SKU substitution.** Unmet demand is recorded as lost rather than partly

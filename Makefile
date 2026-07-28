@@ -1,4 +1,4 @@
-.PHONY: help setup lint test test-fast simulate warehouse features backtest policy all clean db-up db-down db-init
+.PHONY: help setup lint test test-fast simulate warehouse features backtest policy results site all clean db-up db-down db-init
 
 PY := python
 
@@ -45,7 +45,10 @@ policy:
 results:
 	$(PY) -m nova.report.results
 
-all: simulate warehouse features backtest policy results
+site:
+	$(PY) -m nova.report.build_site
+
+all: simulate warehouse features backtest policy results site
 
 # --- Quality ---------------------------------------------------------
 lint:

@@ -160,18 +160,19 @@ def main() -> None:
     inc, nov = results["incumbent_fixed_rop"], results["newsvendor_lgbm"]
     delta = (nov["total_cost"] - inc["total_cost"]) / inc["total_cost"]
 
-    # Bootstrap the relative difference over series, so the CI reflects
-    # heterogeneity across SKUs rather than a single aggregate point.
+    # Bootstrap the relative difference over series.
+    #
+    # Resamples the per-series cost vectors the simulator already returned,
+    # rather than re-running the simulation per replicate. The previous version
+    # re-simulated 400 times, which was affordable under the average-age
+    # approximation and is not under lot cohorts -- and it is the same estimator
+    # either way, because the policies are independent across series.
     rng = np.random.default_rng(0)
-    idx = rng.integers(0, n_s, size=(400, n_s))
-    rel = []
-    for b in idx[:200]:
-        a = simulate_continuous(true[b], {k: v[b] for k, v in inc_levels.items()},
-                                month_index, dim.iloc[b].reset_index(drop=True))
-        c = simulate_continuous(true[b], {k: v[b] for k, v in nova_levels.items()},
-                                month_index, dim.iloc[b].reset_index(drop=True))
-        rel.append((c["total_cost"] - a["total_cost"]) / a["total_cost"])
-    ci = (float(np.quantile(rel, 0.025)), float(np.quantile(rel, 0.975)))
+    inc_cost = results["incumbent_fixed_rop"]["_per_series_cost"]
+    nov_cost = results["newsvendor_lgbm"]["_per_series_cost"]
+    boot = rng.integers(0, n_s, size=(2000, n_s))
+    rel_samples = (nov_cost[boot].sum(axis=1) - inc_cost[boot].sum(axis=1))                   / inc_cost[boot].sum(axis=1)
+    ci = (float(np.quantile(rel_samples, 0.025)), float(np.quantile(rel_samples, 0.975)))
 
     # --- Sensitivity to the stockout penalty ---------------------------
     #
@@ -205,7 +206,9 @@ def main() -> None:
     sens_df = pd.DataFrame(sens)
     sens_df.to_csv(ARTIFACT_DIR / "policy_sensitivity.csv", index=False)
 
-    df = pd.DataFrame(results).T
+    public = {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")}
+              for k, v in results.items()}
+    df = pd.DataFrame(public).T
     df.to_csv(ARTIFACT_DIR / "policy_comparison.csv")
     print(df.to_string())
     print()
@@ -220,7 +223,7 @@ def main() -> None:
     (ARTIFACT_DIR / "policy_summary.json").write_text(json.dumps({
         "total_cost_change": delta, "ci_low": ci[0], "ci_high": ci[1],
         "window_days": int(n_t),
-        "incumbent": inc, "newsvendor": nov,
+        "incumbent": public["incumbent_fixed_rop"], "newsvendor": public["newsvendor_lgbm"],
     }, indent=2, default=str))
 
 

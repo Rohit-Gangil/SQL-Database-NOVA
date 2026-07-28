@@ -3,7 +3,7 @@
 <!-- GENERATED FILE. Produced by `python -m nova.report.results`.
      Do not edit by hand; regenerate with `make all`. -->
 
-Generated 2026-07-28 00:37. Every number below comes from
+Generated 2026-07-28 11:37. Every number below comes from
 `artifacts/` and is reproducible with `make all`.
 
 ## Protocol
@@ -28,13 +28,13 @@ Generated 2026-07-28 00:37. Every number below comes from
 | 1 | Croston (1972) | 0.9604 | [0.9521, 0.9688] | 0.642 | +0.082 |
 | 1 | Syntetos-Boylan (SBA) | 0.9432 | [0.9352, 0.9513] | 0.638 | +0.028 |
 | 1 | Teunter-Syntetos-Babai (TSB) | 0.9110 | [0.9043, 0.9179] | 0.621 | +0.022 |
-| 2 | LightGBM — trained on raw sales | 0.8854 | [0.8806, 0.8909] | 0.613 | -0.062 |
-| 2 | **LightGBM — censoring-corrected** | 0.8928 | [0.8877, 0.8984] | 0.614 | -0.015 |
+| 2 | LightGBM — trained on raw sales | 0.8861 | [0.8815, 0.8916] | 0.613 | -0.061 |
+| 2 | **LightGBM — censoring-corrected** | 0.8933 | [0.8885, 0.8990] | 0.614 | -0.014 |
 | — | _Oracle: the generating process's own mean_ | 0.8827 | [0.8769, 0.8901] | 0.604 | +0.006 |
 
 **How to read this.** The oracle row is the conditional mean of the data-generating
 process — the irreducible-error floor. No forecaster can beat it, so it bounds what
-any model on this data could achieve. LightGBM closes **59%** of the gap
+any model on this data could achieve. LightGBM closes **57%** of the gap
 between the best classical method and that floor.
 
 ### What the ladder shows
@@ -44,10 +44,10 @@ between the best classical method and that floor.
   bug: on series this lumpy, Croston's separate size/interval smoothing buys nothing
   over a plain mean, and its positive bias (+0.082) costs it.
   TSB comes closest of the three, as expected, because it decays for dead items.
-- LightGBM reaches **0.8928**, a **1.6%** relative improvement over the
+- LightGBM reaches **0.8933**, a **1.5%** relative improvement over the
   best classical method. **That is a small gain, and it should be.** The oracle floor
   is 0.8827: the total reducible error available to *any* model was only
-  0.0244 WAPE, and LightGBM captured 59% of it. This
+  0.0244 WAPE, and LightGBM captured 57% of it. This
   data is dominated by irreducible noise, which is what intermittent pharmacy demand
   actually looks like. A model claiming a large WAPE win here would be suspect.
 
@@ -55,12 +55,12 @@ between the best classical method and that floor.
 
 | | WAPE | Bias |
 |---|---:|---:|
-| Trained on raw `units_sold` | 0.8854 | -0.062 |
-| Trained on censoring-corrected target | 0.8928 | -0.015 |
+| Trained on raw `units_sold` | 0.8861 | -0.061 |
+| Trained on censoring-corrected target | 0.8933 | -0.014 |
 
-Training on raw sales gives **better WAPE** (0.8854 vs 0.8928)
-and **four times the bias** (-0.062 vs
--0.015). I expected the correction to improve both.
+Training on raw sales gives **better WAPE** (0.8861 vs 0.8933)
+and **four times the bias** (-0.061 vs
+-0.014). I expected the correction to improve both.
 It did not, and the table says so.
 
 The interpretation matters more than the number. WAPE is symmetric; the inventory
@@ -87,12 +87,21 @@ expected gain is modest — but that is a prior, not a result.
 
 The decision layer needs a distribution, not a point. The LightGBM mean is treated as
 the mean of a negative binomial whose dispersion is estimated from held-out
-residuals: **k = 1.406**.
+residuals: **k = 1.344**.
 
-That distributional assumption is tested rather than asserted — interval coverage is
-reported in `artifacts/backtest_per_origin.csv`. Two known sources of over-narrow
-intervals are stated in docs/LEAKAGE.md: dispersion is reused across origins, and
-daily demand is assumed independent when summed to a horizon.
+| Metric | Measured | Nominal |
+|---|---:|---:|
+| 80% interval coverage | **0.951** | 0.800 |
+| 90% interval coverage | **0.977** | 0.900 |
+| Mean 80% interval width | 1.96 units | — |
+| Mean 90% interval width | 2.69 units | — |
+| Pinball loss @ q50 | 0.3003 | — |
+| Pinball loss @ q90 | 0.2174 | — |
+| Dispersion k | 1.293 | — |
+
+Dispersion is estimated on a **28-day calibration window** sitting between the training data and the evaluation window — not on the evaluation window itself, which an earlier version did and which made any coverage figure optimistic by construction (audit M-2).
+
+**The intervals are too wide.** Nominal 90% coverage measured 0.977, above target, so the newsvendor over-orders at high critical ratios and the cost saving reported below is conservative on that axis.
 
 ## The decision: forecast → order quantity → money
 
@@ -115,15 +124,15 @@ latest forecast — retrain monthly, order weekly.
 
 | | Incumbent fixed-ROP | Newsvendor + LightGBM | Change |
 |---|---:|---:|---:|
-| Stockout cost | ₹1,895,862 | ₹148,790 | -92.2% |
-| Holding cost | ₹181,977 | ₹247,814 | +36.2% |
-| Waste cost | ₹2,800 | ₹4,406 | +57.4% |
-| **Total cost** | ₹2,080,639 | ₹401,010 | -80.7% |
-| Fill rate | 97.74% | 99.74% | +1.99 pts |
-| Units unmet | 17,410 | 2,041 | -88.3% |
-| Units expired | 68 | 109 | +60.3% |
+| Stockout cost | ₹1,896,720 | ₹133,551 | -93.0% |
+| Holding cost | ₹181,946 | ₹250,657 | +37.8% |
+| Waste cost | ₹5,362 | ₹6,060 | +13.0% |
+| **Total cost** | ₹2,084,028 | ₹390,268 | -81.3% |
+| Fill rate | 97.74% | 99.75% | +2.00 pts |
+| Units unmet | 17,412 | 1,963 | -88.7% |
+| Units expired | 161 | 165 | +2.5% |
 
-**Total cost change: -80.73%** (95% CI -82.60%, -79.05%, bootstrap over
+**Total cost change: -81.27%** (95% CI -83.43%, -79.08%, bootstrap over
 series).
 
 ### Read this before quoting that number
@@ -134,11 +143,11 @@ values is not a result, so the penalty was swept across a 16× range:
 
 | Stockout penalty × | Incumbent total | Newsvendor total | Change | Newsvendor fill |
 |---:|---:|---:|---:|---:|
-| 0.25× | ₹658,742 | ₹302,051 | -54.1% | 99.33% |
-| 0.5× | ₹1,132,708 | ₹342,143 | -69.8% | 99.59% |
-| 1× **(base)** | ₹2,080,639 | ₹401,010 | -80.7% | 99.74% |
-| 2× | ₹3,976,500 | ₹523,990 | -86.8% | 99.80% |
-| 4× | ₹7,768,224 | ₹766,928 | -90.1% | 99.83% |
+| 0.25× | ₹661,488 | ₹301,450 | -54.4% | 99.35% |
+| 0.5× | ₹1,135,668 | ₹336,364 | -70.4% | 99.60% |
+| 1× **(base)** | ₹2,084,028 | ₹390,268 | -81.3% | 99.75% |
+| 2× | ₹3,980,749 | ₹499,833 | -87.4% | 99.81% |
+| 4× | ₹7,774,189 | ₹712,048 | -90.8% | 99.84% |
 
 **What is robust:** the direction and the mechanism. Across the whole sweep — even at
 a quarter of the assumed penalty, where an unmet unit costs roughly its lost margin
@@ -150,9 +159,9 @@ criticality-1 vitamin.
 **What is not robust:** the specific percentage. Read "-81%" as *under these
 cost assumptions*, not as a forecast of realisable savings. The operationally
 meaningful figure is the fill rate: **97.74% →
-99.74%**, bought with
-+36%
-holding cost and +60%
+99.75%**, bought with
++38%
+holding cost and +2%
 expiry. That is a real trade, and it is the trade the newsvendor is explicitly making.
 
 ### Two evaluation bugs found and fixed here
@@ -178,10 +187,18 @@ demand over the same window, so every simplification applies equally to both.
 - **The data is synthetic.** These results demonstrate that the methods work on data
   whose generating process is known. They are not evidence of real-world clinical or
   commercial performance. See docs/SIMULATOR.md for the full generating process.
-- **The policy simulator is simplified** relative to the data generator: no lot-level
-  FEFO, expiry approximated at cycle level. Applied identically to both policies.
+- **The comparison's "incumbent" is a leaner policy than the simulator's.** The data
+  simulator's incumbent applies pack-size rounding and a minimum-stocking rule, which
+  force excess onto slow movers that later expires; the comparison's incumbent applies
+  neither. That is why it expires ~160 units here against ~13,400 in the simulator
+  over the same window. The two should not be read as the same policy. (audit C-1b)
 - **Expiry risk in the overage cost is crude** — a turnover-based approximation, not
-  a lot-level calculation.
+  a lot-level calculation. The *simulation* is lot-level; the *cost formula* driving
+  the critical ratio is not.
+- **The bootstrap CI covers SKU sampling only.** It excludes forecast error, model
+  choice, and the cost assumptions — which dominate, as the sensitivity table shows.
+  A ±2pp interval beside a 36pp parameter sensitivity is the narrow number, not the
+  honest one; read the sweep first.
 - **Lead time is deterministic.** Real lead-time variance is a major driver of
   required safety stock, so the simulated environment is easier than reality.
 - **No cross-SKU substitution.** Unmet demand is recorded as lost rather than partly

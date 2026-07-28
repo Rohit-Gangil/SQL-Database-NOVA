@@ -1,24 +1,30 @@
 {
-  "total_cost_change": -0.8072658549702545,
-  "ci_low": -0.8260042441952662,
-  "ci_high": -0.7905461883138525,
+  "total_cost_change": -0.8127340366799363,
+  "ci_low": -0.8343009820391312,
+  "ci_high": -0.790753703247369,
   "window_days": 184,
   "incumbent": {
-    "fill_rate": 0.9774192586097994,
-    "units_unmet": 17410.0,
-    "units_expired": 68.0,
-    "stockout_cost": 1895861.69,
-    "holding_cost": 181977.233875,
-    "waste_cost": 2799.6,
-    "total_cost": 2080638.523875
+    "fill_rate": 0.977416664613086,
+    "units_demanded": 771011.0,
+    "units_sold": 753599.0,
+    "units_unmet": 17412.0,
+    "units_expired": 161.0,
+    "units_ordered": 746424.0,
+    "stockout_cost": 1896720.444,
+    "holding_cost": 181946.14708999998,
+    "waste_cost": 5361.5599999999995,
+    "total_cost": 2084028.1510899998
   },
   "newsvendor": {
-    "fill_rate": 0.997352826353969,
-    "units_unmet": 2041.0,
-    "units_expired": 109.0,
-    "stockout_cost": 148790.02,
-    "holding_cost": 247814.22701499998,
-    "waste_cost": 4405.84,
-    "total_cost": 401010.087015
+    "fill_rate": 0.9974539922257919,
+    "units_demanded": 771011.0,
+    "units_sold": 769048.0,
+    "units_unmet": 1963.0,
+    "units_expired": 165.0,
+    "units_ordered": 758726.0,
+    "stockout_cost": 133551.146,
+    "holding_cost": 250656.6333,
+    "waste_cost": 6059.76,
+    "total_cost": 390267.5393
   }
 }

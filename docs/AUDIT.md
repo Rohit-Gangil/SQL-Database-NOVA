@@ -1,5 +1,10 @@
 # Audit
 
+> **Outcomes are recorded at the bottom of this file** ([jump](#outcomes)).
+> Two of them contradicted predictions made in this document. Both are recorded
+> as written rather than quietly reworded.
+
+
 Full review of the repository against its own claims. Severity is judged by one
 question: **does this make a reported number wrong, or make a documented claim
 untrue?** Cosmetic issues rank below both.
@@ -222,3 +227,96 @@ Stage 3.
   `mart`.
 - **Runtime dependency pins** all match what was used.
 - **`main` is untouched** and identical to `origin/main`.
+
+---
+
+## Outcomes
+
+Every finding was fixed except where noted. Two predictions made above turned out
+wrong, and the wrong predictions are left in the text above rather than edited to
+match the result.
+
+### C-1 — fixed, and **the prediction about its impact was wrong**
+
+The defect was real and is quantified above: 68 units expired against the
+simulator's 13,384. It is fixed — `nova/inventory/lots.py` now runs lot cohorts
+with FEFO depletion, used by both policies and by the tests.
+
+**But the headline barely moved: −80.73% → −81.27%.**
+
+I predicted the saving would "shrink, possibly substantially". It did not. The
+reason is that under *either* policy in this comparison, waste is small relative
+to the stockout term — total waste is ₹5,362 (incumbent) and ₹6,060 (NOVA)
+against a stockout cost of ₹1.90M and ₹0.13M. Making expiry ~200× more accurate
+changed a rounding-error line item.
+
+So: the bug was real, the fix was correct, and **the conclusion was robust to
+it.** That is a better outcome than the fix rescuing the number, and it is worth
+more than a corrected figure would have been — the result now survives a
+correction it did not need.
+
+### C-1b — NEW finding, discovered while fixing C-1
+
+The lot-level simulator still expires only **161–165 units** over the window,
+against the data simulator's 13,384. That residual gap is **not** a simulator
+bug — it is a **policy mismatch**. The data simulator's incumbent applies
+pack-size rounding and a minimum-stocking rule, which force excess onto slow
+movers that then expires. The comparison's incumbent applies neither, so it
+holds far less and wastes far less.
+
+Consequence: the "incumbent" in the policy comparison is a **leaner policy** than
+the "incumbent" calibrated to 92.3% fill in `docs/SIMULATOR.md`, and the two
+should not be read as the same thing. Recorded as a limitation in
+`docs/RESULTS.md` rather than fixed, because changing the baseline policy now
+would invalidate the comparison without a further full re-validation.
+
+### C-2 — fixed, and **the prediction about the result was wrong**
+
+Coverage and pinball loss are now computed and reported. I predicted the
+intervals would come back **too narrow**, on the reasoning that assuming
+independence across days understates horizon variance.
+
+**They are too wide.** Nominal 90% coverage measured **0.977**; nominal 80%
+measured **0.951**. Estimated dispersion (k ≈ 1.29) sits below the generating
+process's 1.6, because model error inflates the residual variance the estimator
+sees, which widens the intervals rather than narrowing them — an effect that
+outweighs the independence assumption.
+
+Consequence, stated in RESULTS.md: the newsvendor reads its order quantity off
+these quantiles, so too-wide intervals make it **over-order** at high critical
+ratios. The reported saving is therefore *conservative* on that axis.
+
+### M-1, M-2, M-5, m-1, m-2, m-4 — fixed
+
+One policy simulator, exercised by the tests that assert its economics.
+Dispersion moved to a 28-day calibration window between training and evaluation.
+Small artifacts committed. Pins corrected. Reshape guarded by an explicit
+rectangularity check. Dead variable removed.
+
+### m-3 — fixed, but **it did not deliver the expected speedup**
+
+Baselines are vectorised across series and match the reference implementations
+(8 equivalence tests). But total backtest runtime **rose** from 1,223s to 2,048s.
+
+The diagnosis in the audit was wrong: the classical baselines were not the
+bottleneck. LightGBM training and the 5.9M-row feature queries were, and the C-2
+fix *added* a second prediction window per model per origin. The vectorisation is
+still correct and worth keeping — it is now a negligible share of runtime instead
+of a large one — but it did not buy what it was scheduled to buy.
+
+### M-4 — NOT fixed; scaffolding removed instead
+
+The leave-one-group-out feature ablation (PLAN.md P6 DoD item 6) was **not run**.
+`FEATURE_GROUPS` has been deleted rather than left implying almost-finished work.
+The DoD item is recorded as **NOT MET** in `docs/PROGRESS.md`.
+
+### M-6 — NOT fixed; already disclosed
+
+Hierarchical reconciliation (MinT/OLS) remains unbuilt. It was correctly
+disclosed in README and PROGRESS before this audit and remains so.
+
+### Deliberately not fixed
+
+PostgreSQL verification (no Docker or `psql` on this machine — remains UNVERIFIED
+everywhere including the new site), rung 3 / TFT, P7–P11, and lead-time
+stochasticity.
